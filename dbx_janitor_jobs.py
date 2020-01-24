@@ -6,8 +6,6 @@ reset_schedules = True
 def is_excluded_cluster(cinfo):
   if cinfo is None:
     return False
-  if cinfo['creator_user_name'] in exclude_users_list:
-    return True
   keep_alive_tags = ["keepalive", "keep_alive"]
   if cinfo.get('custom_tags', None):
     tag_keys = [tag.lower() for tag in cinfo['custom_tags'].keys()]
@@ -15,12 +13,6 @@ def is_excluded_cluster(cinfo):
       return True
     else:
       return False
-  else:
-    return False
-
-def is_excluded_user(job_info):
-  if job_info['creator_user_name'] in exclude_users_list:
-    return True
   else:
     return False
 
@@ -63,7 +55,7 @@ def cleanup_jobs(url, token, env_name):
   print("# Long running jobs\n")
   for job in long_jobs_list:
     print("Long running job: {0}\t User: {1}".format(job['job_id'], job['creator_user_name']))
-    if is_excluded_user(job) or is_excluded_cluster(job.get('cluster', None)):
+    if is_excluded_cluster(job.get('cluster', None)):
       report['excluded'].append(job)
     else: 
       report['long_running'].append(job)
@@ -72,7 +64,7 @@ def cleanup_jobs(url, token, env_name):
   for job in sjobs:
     # if job is created by HLS team, exclude from periodic cleanup
     print("Scheduled job: {0}\t User: {1}\t Schedule: {2}".format(job['job_id'], job['creator_user_name'], job['schedule']))
-    if is_excluded_user(job) or is_excluded_cluster(job.get('cluster', None)):
+    if is_excluded_cluster(job.get('cluster', None)):
       report['excluded'].append(job)
     else:
       report['scheduled'].append(job)
