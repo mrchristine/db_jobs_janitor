@@ -7,8 +7,8 @@ class JobsClient(dbclient):
 
     def get_jobs_list(self, printJson=False):
         """ Returns an array of json objects for jobs """
-        jobs = self.get("/jobs/list", printJson)
-        return jobs['jobs']
+        jobs = self.get("/jobs/list", printJson).get('jobs', [])
+        return jobs
 
     def delete_job(self, job_id=None):
         resp = self.post('/jobs/delete', {"job_id": job_id})
@@ -25,47 +25,49 @@ class JobsClient(dbclient):
         """ get running jobs list for jobs running over N hours """
         # get current time
         now = datetime.datetime.utcnow()
-        run_list = self.get('/jobs/runs/list')['runs']
+        run_list = self.get('/jobs/runs/list').get('runs', None)
 
-        running_jobs = list(filter(lambda x: x['state']['life_cycle_state'] == "RUNNING", run_list))
-        # Build a list of long running jobs
-        job_list = []
-        if running_jobs:
-            print("Long running jobs debugging ...")
-        for x in running_jobs:
-            print(x)
-            run_obj = dict()
-            run_obj['run_id'] = x['run_id']
-            # store datetime in str format to serialize into json for logging purposes.
-            run_obj['start_time'] = str(datetime.datetime.utcfromtimestamp(x['start_time'] // 1000))
-            run_obj['creator_user_name'] = x.get('creator_user_name', 'unknown')
-            # grab existing cluster id if exists. we will need later to get cluster config json
-            existing_cluster_id = x.get('cluster_spec', None).get('existing_cluster_id', None)
-            if existing_cluster_id is not None:
-                # grab existing cluster config using clusters api
-                cluster_config = self.get("/clusters/get", {"cluster_id": existing_cluster_id})
-                run_obj['cluster'] = cluster_config
-            else:
-                # else its a new cluster and grab the new cluster config json
-                new_cluster_conf = x.get('cluster_spec', None).get('new_cluster', None)
-                new_cluster_conf['creator_user_name'] = run_obj['creator_user_name']
-                run_obj['cluster'] = new_cluster_conf
-            # If its a spark-submit job, it doesn't contain a job_id parameter. continue with other jobs.
-            jid = x.get('job_id', None)
-            if jid == None:
-                continue
-            else:
-                run_obj['job_id'] = jid
-            # get the run time for the job
-            start_dt_obj = datetime.datetime.strptime(run_obj['start_time'], '%Y-%m-%d %H:%M:%S')
-            # get the time delta in seconds
-            rt = now - start_dt_obj
-            hours_run = rt.total_seconds() / 3600
-            run_obj['hours_run'] = hours_run
-            if (hours_run > run_time):
-                # return a list of job runs that we need to stop using the `run_id`
-                job_list.append(run_obj)
-        return job_list
+        if run_list:
+            running_jobs = list(filter(lambda x: x['state']['life_cycle_state'] == "RUNNING", run_list))
+            # Build a list of long running jobs
+            job_list = []
+            if running_jobs:
+                print("Long running jobs debugging ...")
+            for x in running_jobs:
+                print(x)
+                run_obj = dict()
+                run_obj['run_id'] = x['run_id']
+                # store datetime in str format to serialize into json for logging purposes.
+                run_obj['start_time'] = str(datetime.datetime.utcfromtimestamp(x['start_time'] // 1000))
+                run_obj['creator_user_name'] = x.get('creator_user_name', 'unknown')
+                # grab existing cluster id if exists. we will need later to get cluster config json
+                existing_cluster_id = x.get('cluster_spec', None).get('existing_cluster_id', None)
+                if existing_cluster_id is not None:
+                    # grab existing cluster config using clusters api
+                    cluster_config = self.get("/clusters/get", {"cluster_id": existing_cluster_id})
+                    run_obj['cluster'] = cluster_config
+                else:
+                    # else its a new cluster and grab the new cluster config json
+                    new_cluster_conf = x.get('cluster_spec', None).get('new_cluster', None)
+                    new_cluster_conf['creator_user_name'] = run_obj['creator_user_name']
+                    run_obj['cluster'] = new_cluster_conf
+                # If its a spark-submit job, it doesn't contain a job_id parameter. continue with other jobs.
+                jid = x.get('job_id', None)
+                if jid == None:
+                    continue
+                else:
+                    run_obj['job_id'] = jid
+                # get the run time for the job
+                start_dt_obj = datetime.datetime.strptime(run_obj['start_time'], '%Y-%m-%d %H:%M:%S')
+                # get the time delta in seconds
+                rt = now - start_dt_obj
+                hours_run = rt.total_seconds() / 3600
+                run_obj['hours_run'] = hours_run
+                if (hours_run > run_time):
+                    # return a list of job runs that we need to stop using the `run_id`
+                    job_list.append(run_obj)
+            return job_list
+        return []
 
     def kill_run(self, run_id=None):
         """ stop the job run given the run id of the job """
@@ -107,31 +109,32 @@ class JobsClient(dbclient):
 
     def get_scheduled_jobs(self):
         # Grab job templates
-        run_list = self.get('/jobs/list')['jobs']
+        run_list = self.get('/jobs/list').get('jobs', None)
 
-        # Filter all the jobs that have a schedule defined
-        scheduled_jobs = filter(lambda x: 'schedule' in x['settings'], run_list)
         jobs_list = []
-        for x in scheduled_jobs:
-            y = dict()
-            y['creator_user_name'] = x.get('creator_user_name', 'unknown')
-            y['job_id'] = x['job_id']
-            y['job_name'] = x['settings']['name']
-            y['created_time'] = datetime.datetime.fromtimestamp(x['created_time'] / 1000.0).strftime(
-                '%Y-%m-%d %H:%M:%S.%f')
-            job_settings = x.get('settings', None)
-            job_schedule = job_settings.get('schedule', None)
-            try:
-                readable_schedule = get_description(job_schedule.get('quartz_cron_expression'))
-                y['schedule'] = readable_schedule
-            except FormatException:
-                y['schedule'] = job_schedule.get('quartz_cron_expression')
-            new_cluster_conf = x.get('settings', None).get('new_cluster', None)
-            if new_cluster_conf is not None:
-                # job is configured to run on a new cluster, we can check keep alive tags
-                new_cluster_conf['creator_user_name'] = x.get('creator_user_name', 'unknown')
-                y['cluster'] = new_cluster_conf
-            jobs_list.append(y)
+        if run_list:
+            # Filter all the jobs that have a schedule defined
+            scheduled_jobs = filter(lambda x: 'schedule' in x['settings'], run_list)
+            for x in scheduled_jobs:
+                y = dict()
+                y['creator_user_name'] = x.get('creator_user_name', 'unknown')
+                y['job_id'] = x['job_id']
+                y['job_name'] = x['settings']['name']
+                y['created_time'] = datetime.datetime.fromtimestamp(x['created_time'] / 1000.0).strftime(
+                    '%Y-%m-%d %H:%M:%S.%f')
+                job_settings = x.get('settings', None)
+                job_schedule = job_settings.get('schedule', None)
+                try:
+                    readable_schedule = get_description(job_schedule.get('quartz_cron_expression'))
+                    y['schedule'] = readable_schedule
+                except FormatException:
+                    y['schedule'] = job_schedule.get('quartz_cron_expression')
+                new_cluster_conf = x.get('settings', None).get('new_cluster', None)
+                if new_cluster_conf is not None:
+                    # job is configured to run on a new cluster, we can check keep alive tags
+                    new_cluster_conf['creator_user_name'] = x.get('creator_user_name', 'unknown')
+                    y['cluster'] = new_cluster_conf
+                jobs_list.append(y)
         return jobs_list
 
     def reset_job_schedule(self, job_id=None):
