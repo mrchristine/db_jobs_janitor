@@ -12,8 +12,9 @@ def get_job_configs(config_path='config/job.conf'):
     config_list = []
     with open(config_path, 'r') as fp:
         for env in fp:
-            env_conf = json.loads(env)
-            config_list.append(env_conf)
+            if env.strip():
+                env_conf = json.loads(env)
+                config_list.append(env_conf)
     return config_list
 
 
