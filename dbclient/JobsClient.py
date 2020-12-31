@@ -179,21 +179,3 @@ class JobsClient(dbclient):
         duplicate_jobs = {k: v for k, v in job_dups.items() if len(v) > 1}
         return duplicate_jobs
 
-    def get_delta_pipelines(self):
-        pipeline_jobs = self.get('/pipelines').get('statuses', [])
-        return pipeline_jobs
-
-    def terminate_pipelines(self):
-        pipelines = self.get_delta_pipelines()
-        terminated = []
-        for job in pipelines:
-            id = job.get('pipeline_id', '')
-            if id:
-                endpoint = f'/pipelines/{id}'
-                resp = self.delete(endpoint)
-                print(resp)
-                terminated.append(job)
-            else:
-                print("Id missing from job ...")
-                print(job)
-        return terminated

@@ -20,7 +20,7 @@ def is_excluded_cluster(cinfo):
 
 
 def cleanup_jobs(url, token, env_name):
-    c_types = ['env_name', 'excluded', 'scheduled', 'long_running', 'empty_job', 'pipeline_jobs']
+    c_types = ['env_name', 'excluded', 'scheduled', 'long_running', 'empty_job' ]
     report = dict([(key, []) for key in c_types])
     report['env_name'] = (env_name, url)
     # Simple class to list versions and get active cluster list
@@ -94,10 +94,6 @@ def cleanup_jobs(url, token, env_name):
                 deleted_job_ids.add(job['job_id'])
                 jclient.delete_job(job['job_id'])
 
-    print("# Terminate Delta Pipelines\n")
-    killed_pipelines = jclient.terminate_pipelines()
-    print("Total killed pipelines: {0}".format(len(killed_pipelines)))
-    report['pipeline_jobs'] = killed_pipelines
     return report
 
 
