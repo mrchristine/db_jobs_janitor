@@ -107,6 +107,19 @@ class JobsClient(dbclient):
         unique_empty_jobs = [dict(t) for t in set([tuple(d.items()) for d in empty_job_ids])]
         return unique_empty_jobs
 
+    @staticmethod
+    def is_job_dlt(job_details):
+        cluster = job_details.get('cluster', '')
+        # check that the job runs on a new cluster
+        if cluster:
+            # check if spark config exists
+            spark_conf = cluster.get('spark_conf', '')
+            if spark_conf:
+                for conf, value in spark_conf.items():
+                    if 'pipelines.id' == conf:
+                        return True
+        return False
+
     def get_scheduled_jobs(self):
         # Grab job templates
         run_list = self.get('/jobs/list').get('jobs', None)
@@ -116,6 +129,8 @@ class JobsClient(dbclient):
             # Filter all the jobs that have a schedule defined
             scheduled_jobs = filter(lambda x: 'schedule' in x['settings'], run_list)
             for x in scheduled_jobs:
+                if self.is_job_dlt(x):
+                    continue
                 y = dict()
                 y['creator_user_name'] = x.get('creator_user_name', 'unknown')
                 y['job_id'] = x['job_id']
