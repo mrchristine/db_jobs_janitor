@@ -5,9 +5,24 @@ import json, datetime
 
 class JobsClient(dbclient):
 
-    def get_jobs_list(self, printJson=False):
+    def get_jobs_list_details(self):
+        """
+        new function to get all job details include multi-task jobs
+        job details must be fetched manually
+        """
+        jobs_list = self.get('/jobs/list').get('jobs', [])
+        standard_jobs = list(filter(lambda x: (not self.is_all_empty(x)), jobs_list))
+        multitask_jobs = list(filter(lambda x: self.is_all_empty(x), jobs_list))
+        mt_job_ids = list(map(lambda x: x.get('job_id'), multitask_jobs))
+        for job_id in mt_job_ids:
+            job_details = self.get(f'/jobs/get?job_id={job_id}')
+            # add back multi-task job details to return a list of full job details
+            standard_jobs.append(job_details)
+        return standard_jobs
+
+    def get_jobs_list(self, print_json=False):
         """ Returns an array of json objects for jobs """
-        jobs = self.get("/jobs/list", printJson).get('jobs', [])
+        jobs = self.get("/jobs/list", print_json).get('jobs', [])
         return jobs
 
     def delete_job(self, job_id=None):
@@ -15,11 +30,23 @@ class JobsClient(dbclient):
         return resp
 
     def get_job_id(self, name):
-        jobs = self.get_jobs_list()
+        jobs = self.get_jobs_list_details()
         for i in jobs:
             if i['settings']['name'] == name:
                 return i['job_id']
         return None
+
+    def get_multitask_jobs(self):
+        """
+        get a list of multi-task jobs and log them for reporting
+        """
+        job_list = self.get_jobs_list_details()
+
+        mt_jobs = []
+        for job in job_list:
+            if self.is_job_multitask_job(job):
+                mt_jobs.append(job)
+        return mt_jobs
 
     def get_jobs_duration(self, run_time=0):
         """ get running jobs list for jobs running over N hours """
@@ -78,7 +105,8 @@ class JobsClient(dbclient):
             # Grab the run_id from the result
             pprint_j(resp)
 
-    def is_all_empty(self, job_details):
+    @staticmethod
+    def is_all_empty(job_details):
         # get task attributes: https://docs.databricks.com/api/latest/jobs.html#request-structure
         is_spark_jar_task = job_details['settings'].get('spark_jar_task', None)
         is_notebook_task = job_details['settings'].get('notebook_task', None)
@@ -89,27 +117,31 @@ class JobsClient(dbclient):
                      is_notebook_task,
                      is_python_task,
                      is_spark_submit_task]
-        is_all_empty = all(v is None for v in all_tasks)
-        return is_all_empty
+        is_job_all_empty = all(v is None for v in all_tasks)
+        return is_job_all_empty
 
     def find_empty_jobs(self):
-        jobs = self.get_jobs_list()
+        jobs = self.get_jobs_list_details()
         # look for jobs without titles
-        untilted_jobs = list(filter(lambda x: x['settings']['name'] == "Untitled", jobs))
+        untitled_jobs = list(filter(lambda x: x['settings']['name'] == "Untitled", jobs))
         # look for jobs without any tasks
         empty_jobs = list(filter(lambda x: self.is_all_empty(x), jobs))
         # find the creators of this job to see how often these users create empty jobs
-        creators_untitled = list(map(lambda x: x.get('creator_user_name', 'unknown'), untilted_jobs))
+        creators_untitled = list(map(lambda x: x.get('creator_user_name', 'unknown'), untitled_jobs))
         creators_empty = list(map(lambda x: x.get('creator_user_name', 'unknown'), empty_jobs))
         # convert into a set to remove duplicates from the list
         empty_job_ids = list(map(lambda x: {'job_id': x['job_id'], 'creator': x.get('creator_user_name', 'unknown')},
-                            empty_jobs + untilted_jobs))
+                            empty_jobs + untitled_jobs))
         unique_empty_jobs = [dict(t) for t in set([tuple(d.items()) for d in empty_job_ids])]
         return unique_empty_jobs
 
     @staticmethod
     def is_job_dlt(job_details):
-        cluster = job_details.get('cluster', '')
+        """
+        check if this is a delta live tables job by looking at the defined spark configs
+        """
+        job_settings = job_details.get('settings')
+        cluster = job_settings.get('new_cluster', '')
         # check that the job runs on a new cluster
         if cluster:
             # check if spark config exists
@@ -120,16 +152,28 @@ class JobsClient(dbclient):
                         return True
         return False
 
+    @staticmethod
+    def is_job_multitask_job(job_details):
+        """
+        check if there's multi-task job definitions
+        the settings would have a list of `tasks` to define each step
+        """
+        if 'tasks' in job_details.get('settings'):
+            return True
+        return False
+
     def get_scheduled_jobs(self):
         # Grab job templates
-        run_list = self.get('/jobs/list').get('jobs', None)
+        run_list = self.get_jobs_list_details()
 
         jobs_list = []
         if run_list:
             # Filter all the jobs that have a schedule defined
-            scheduled_jobs = filter(lambda x: 'schedule' in x['settings'], run_list)
+            scheduled_jobs = filter(lambda job: 'schedule' in job['settings'], run_list)
             for x in scheduled_jobs:
-                if self.is_job_dlt(x):
+                # TODO: Update later with filter for multi-task job schedules
+                # remove the multi-task job filter and keep DLT filter
+                if self.is_job_dlt(x) or self.is_job_multitask_job(x):
                     continue
                 y = dict()
                 y['creator_user_name'] = x.get('creator_user_name', 'unknown')
@@ -182,7 +226,7 @@ class JobsClient(dbclient):
 
     def get_duplicate_jobs(self):
         job_dups = {}
-        jl = self.get_jobs_list()
+        jl = self.get_jobs_list_details()
         for job in jl:
             jname = job['settings']['name']
             jid = job['job_id']

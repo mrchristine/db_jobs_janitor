@@ -20,7 +20,7 @@ def is_excluded_cluster(cinfo):
 
 
 def cleanup_jobs(url, token, env_name):
-    c_types = ['env_name', 'excluded', 'scheduled', 'long_running', 'empty_job' ]
+    c_types = ['env_name', 'excluded', 'scheduled', 'long_running', 'empty_job', 'multitask_job']
     report = dict([(key, []) for key in c_types])
     report['env_name'] = (env_name, url)
     # Simple class to list versions and get active cluster list
@@ -36,13 +36,19 @@ def cleanup_jobs(url, token, env_name):
     print("Get scheduled jobs ....")
     sjobs = jclient.get_scheduled_jobs()
 
+    # get multitask jobs
+    print("Get multi-task jobs ....")
+    mt_jobs = jclient.get_multitask_jobs()
+    for mt_job in mt_jobs:
+        report['multitask_job'].append(mt_job)
+
     # get duplicate jobs by name
     djobs = jclient.get_duplicate_jobs()
 
     # get empty / untitled jobs
     print("Get empty jobs ....")
     empty_jobs = jclient.find_empty_jobs()
-
+    print("Finished empty jobs!")
     hour_min = datetime.datetime.now().strftime("%H_%M")
 
     print("# Delete duplicate job names")
@@ -79,7 +85,7 @@ def cleanup_jobs(url, token, env_name):
 
     if reset_schedules:
         for k, v in report.items():
-            if k in ('excluded', 'env_name', 'empty_job'):
+            if k in ('excluded', 'env_name', 'empty_job', 'multitask_job'):
                 continue
             elif k == 'scheduled':
                 for job in v:
