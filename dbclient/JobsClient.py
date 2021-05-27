@@ -16,6 +16,9 @@ class JobsClient(dbclient):
         mt_job_ids = list(map(lambda x: x.get('job_id'), multitask_jobs))
         for job_id in mt_job_ids:
             job_details = self.get(f'/jobs/get?job_id={job_id}')
+            del job_details['http_status_code'] # del the http response code since it's not necessary
+            job_details['created_time'] = datetime.datetime.fromtimestamp(
+                job_details['created_time'] / 1000.0).strftime('%Y-%m-%d %H:%M:%S.%f')
             # add back multi-task job details to return a list of full job details
             standard_jobs.append(job_details)
         return standard_jobs
@@ -58,8 +61,6 @@ class JobsClient(dbclient):
             running_jobs = list(filter(lambda x: x['state']['life_cycle_state'] == "RUNNING", run_list))
             # Build a list of long running jobs
             job_list = []
-            if running_jobs:
-                print("Long running jobs debugging ...")
             for x in running_jobs:
                 print(x)
                 run_obj = dict()
@@ -90,7 +91,7 @@ class JobsClient(dbclient):
                 rt = now - start_dt_obj
                 hours_run = rt.total_seconds() / 3600
                 run_obj['hours_run'] = hours_run
-                if (hours_run > run_time):
+                if hours_run > run_time:
                     # return a list of job runs that we need to stop using the `run_id`
                     job_list.append(run_obj)
             return job_list
@@ -99,7 +100,7 @@ class JobsClient(dbclient):
     def kill_run(self, run_id=None):
         """ stop the job run given the run id of the job """
         if run_id is None:
-            raise ("Invalid run_id")
+            raise Exception("Invalid run_id")
         else:
             resp = self.post('/jobs/runs/cancel', {"run_id": run_id})
             # Grab the run_id from the result
@@ -112,11 +113,13 @@ class JobsClient(dbclient):
         is_notebook_task = job_details['settings'].get('notebook_task', None)
         is_python_task = job_details['settings'].get('spark_python_task', None)
         is_spark_submit_task = job_details['settings'].get('spark_submit_task', None)
+        is_multitask_task = job_details['settings'].get('tasks', None)
         # OR all operations to find whether we have a single defined tasks
         all_tasks = [is_spark_jar_task,
                      is_notebook_task,
                      is_python_task,
-                     is_spark_submit_task]
+                     is_spark_submit_task,
+                     is_multitask_task]
         is_job_all_empty = all(v is None for v in all_tasks)
         return is_job_all_empty
 
