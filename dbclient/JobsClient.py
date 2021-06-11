@@ -17,8 +17,6 @@ class JobsClient(dbclient):
         for job_id in mt_job_ids:
             job_details = self.get(f'/jobs/get?job_id={job_id}')
             del job_details['http_status_code'] # del the http response code since it's not necessary
-            job_details['created_time'] = datetime.datetime.fromtimestamp(
-                job_details['created_time'] / 1000.0).strftime('%Y-%m-%d %H:%M:%S.%f')
             # add back multi-task job details to return a list of full job details
             standard_jobs.append(job_details)
         return standard_jobs
