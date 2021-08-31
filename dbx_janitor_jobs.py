@@ -2,7 +2,7 @@ from dbclient import *
 
 # python 3.6
 
-reset_schedules = False
+reset_schedules = True
 
 
 def is_excluded_cluster(cinfo):

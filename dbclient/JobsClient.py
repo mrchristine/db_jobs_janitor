@@ -53,7 +53,7 @@ class JobsClient(dbclient):
         """ get running jobs list for jobs running over N hours """
         # get current time
         now = datetime.datetime.utcnow()
-        run_list = self.get('/jobs/runs/list').get('runs', None)
+        run_list = self.get('/jobs/runs/list').get('runs', [])
 
         if run_list:
             running_jobs = list(filter(lambda x: x['state']['life_cycle_state'] == "RUNNING", run_list))
@@ -68,15 +68,18 @@ class JobsClient(dbclient):
                 run_obj['creator_user_name'] = x.get('creator_user_name', 'unknown')
                 # grab existing cluster id if exists. we will need later to get cluster config json
                 existing_cluster_id = x.get('cluster_spec', None).get('existing_cluster_id', None)
+                new_cluster_conf = x.get('cluster_spec', None).get('new_cluster', None)
                 if existing_cluster_id is not None:
                     # grab existing cluster config using clusters api
                     cluster_config = self.get("/clusters/get", {"cluster_id": existing_cluster_id})
                     run_obj['cluster'] = cluster_config
-                else:
+                elif new_cluster_conf is not None:
                     # else its a new cluster and grab the new cluster config json
-                    new_cluster_conf = x.get('cluster_spec', None).get('new_cluster', None)
                     new_cluster_conf['creator_user_name'] = run_obj['creator_user_name']
                     run_obj['cluster'] = new_cluster_conf
+                else:
+                    run_obj['cluster'] = 'empty cluster definition'
+
                 # If its a spark-submit job, it doesn't contain a job_id parameter. continue with other jobs.
                 jid = x.get('job_id', None)
                 if jid == None:
@@ -112,12 +115,14 @@ class JobsClient(dbclient):
         is_python_task = job_details['settings'].get('spark_python_task', None)
         is_spark_submit_task = job_details['settings'].get('spark_submit_task', None)
         is_multitask_task = job_details['settings'].get('tasks', None)
+        is_pipeline_task = job_details['settings'].get('pipeline_task', None)
         # OR all operations to find whether we have a single defined tasks
         all_tasks = [is_spark_jar_task,
                      is_notebook_task,
                      is_python_task,
                      is_spark_submit_task,
-                     is_multitask_task]
+                     is_multitask_task,
+                     is_pipeline_task]
         is_job_all_empty = all(v is None for v in all_tasks)
         return is_job_all_empty
 
