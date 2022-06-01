@@ -10,16 +10,22 @@ class JobsClient(dbclient):
         new function to get all job details include multi-task jobs
         job details must be fetched manually
         """
-        jobs_list = self.get('/jobs/list').get('jobs', [])
-        standard_jobs = list(filter(lambda x: (not self.is_all_empty(x)), jobs_list))
-        multitask_jobs = list(filter(lambda x: self.is_all_empty(x), jobs_list))
-        mt_job_ids = list(map(lambda x: x.get('job_id'), multitask_jobs))
-        for job_id in mt_job_ids:
-            job_details = self.get(f'/jobs/get?job_id={job_id}')
+        j_resp = self.get('/jobs/list', version='2.1')
+        offset = 0
+        jobs_list = j_resp.get('jobs', [])
+        while j_resp.get('has_more'):
+            offset = len(jobs_list)
+            j_resp = self.get(f'/jobs/list?offset={offset}', version='2.1')
+            jobs_list = jobs_list + j_resp.get('jobs', [])
+        # with the latest rollout, we can no longer have empty tasks / jobs so we don't need to check for this
+        # all jobs have been migrated to multi-task jobs
+        job_ids_list = list(map(lambda x: x.get('job_id'), jobs_list))
+        all_job_details = []
+        for job_id in job_ids_list:
+            job_details = self.get(f'/jobs/get?job_id={job_id}', version='2.1')
             del job_details['http_status_code'] # del the http response code since it's not necessary
-            # add back multi-task job details to return a list of full job details
-            standard_jobs.append(job_details)
-        return standard_jobs
+            all_job_details.append(job_details)
+        return all_job_details
 
     def get_jobs_list(self, print_json=False):
         """ Returns an array of json objects for jobs """
@@ -49,54 +55,46 @@ class JobsClient(dbclient):
                 mt_jobs.append(job)
         return mt_jobs
 
+    def is_excluded_job_by_tag(self, job_id):
+        job_details = self.get(f'/jobs/get?job_id={job_id}')
+
+        job_tags = job_details.get('settings').get('tags', {})
+        if job_tags:
+            lower_keys = list(map(lambda y: y.lower(), job_tags.keys()))
+            if 'keepalive' in lower_keys:
+                print("Skipping killing job due to KeepAlive tag on job.")
+                return True
+        return False
+
     def get_jobs_duration(self, run_time=0):
         """ get running jobs list for jobs running over N hours """
         # get current time
         now = datetime.datetime.utcnow()
-        run_list = self.get('/jobs/runs/list').get('runs', [])
+        running_jobs_list = self.get('/jobs/runs/list?active_only=true').get('runs', [])
+        job_list = []
+        for x in running_jobs_list:
+            run_obj = dict()
+            run_obj['run_id'] = x['run_id']
+            # store datetime in str format to serialize into json for logging purposes.
+            run_obj['start_time'] = str(datetime.datetime.utcfromtimestamp(x['start_time'] // 1000))
+            run_obj['creator_user_name'] = x.get('creator_user_name', 'unknown')
 
-        if run_list:
-            running_jobs = list(filter(lambda x: x['state']['life_cycle_state'] == "RUNNING", run_list))
-            # Build a list of long running jobs
-            job_list = []
-            for x in running_jobs:
-                print(x)
-                run_obj = dict()
-                run_obj['run_id'] = x['run_id']
-                # store datetime in str format to serialize into json for logging purposes.
-                run_obj['start_time'] = str(datetime.datetime.utcfromtimestamp(x['start_time'] // 1000))
-                run_obj['creator_user_name'] = x.get('creator_user_name', 'unknown')
-                # grab existing cluster id if exists. we will need later to get cluster config json
-                existing_cluster_id = x.get('cluster_spec', None).get('existing_cluster_id', None)
-                new_cluster_conf = x.get('cluster_spec', None).get('new_cluster', None)
-                if existing_cluster_id is not None:
-                    # grab existing cluster config using clusters api
-                    cluster_config = self.get("/clusters/get", {"cluster_id": existing_cluster_id})
-                    run_obj['cluster'] = cluster_config
-                elif new_cluster_conf is not None:
-                    # else its a new cluster and grab the new cluster config json
-                    new_cluster_conf['creator_user_name'] = run_obj['creator_user_name']
-                    run_obj['cluster'] = new_cluster_conf
-                else:
-                    run_obj['cluster'] = 'empty cluster definition'
-
-                # If its a spark-submit job, it doesn't contain a job_id parameter. continue with other jobs.
-                jid = x.get('job_id', None)
-                if jid == None:
-                    continue
-                else:
-                    run_obj['job_id'] = jid
-                # get the run time for the job
-                start_dt_obj = datetime.datetime.strptime(run_obj['start_time'], '%Y-%m-%d %H:%M:%S')
-                # get the time delta in seconds
-                rt = now - start_dt_obj
-                hours_run = rt.total_seconds() / 3600
-                run_obj['hours_run'] = hours_run
-                if hours_run > run_time:
-                    # return a list of job runs that we need to stop using the `run_id`
-                    job_list.append(run_obj)
-            return job_list
-        return []
+            # If its a spark-submit job, it doesn't contain a job_id parameter. continue with other jobs.
+            jid = x.get('job_id', None)
+            if jid == None:
+                continue
+            else:
+                run_obj['job_id'] = jid
+            # get the run time for the job
+            start_dt_obj = datetime.datetime.strptime(run_obj['start_time'], '%Y-%m-%d %H:%M:%S')
+            # get the time delta in seconds
+            rt = now - start_dt_obj
+            hours_run = rt.total_seconds() / 3600
+            run_obj['hours_run'] = hours_run
+            if hours_run > run_time:
+                # return a list of job runs that we need to stop using the `run_id`
+                job_list.append(run_obj)
+        return job_list
 
     def kill_run(self, run_id=None):
         """ stop the job run given the run id of the job """
@@ -175,12 +173,8 @@ class JobsClient(dbclient):
         jobs_list = []
         if run_list:
             # Filter all the jobs that have a schedule defined
-            scheduled_jobs = filter(lambda job: 'schedule' in job['settings'], run_list)
+            scheduled_jobs = list(filter(lambda job: 'schedule' in job['settings'], run_list))
             for x in scheduled_jobs:
-                # TODO: Update later with filter for multi-task job schedules
-                # remove the multi-task job filter and keep DLT filter
-                if self.is_job_dlt(x) or self.is_job_multitask_job(x):
-                    continue
                 y = dict()
                 y['creator_user_name'] = x.get('creator_user_name', 'unknown')
                 y['job_id'] = x['job_id']
@@ -206,7 +200,17 @@ class JobsClient(dbclient):
         if job_id is not None:
             resp = self.get('/jobs/get?job_id={0}'.format(job_id))
             print("Job template: ")
+            if resp.get('http_status_code') != 200:
+                print("ERROR:")
+                pprint_j(resp)
+                return
             pprint_j(resp)
+            job_tags = resp.get('settings').get('tags', {})
+            if job_tags:
+                lower_keys = list(map(lambda y: y.lower(), job_tags.keys()))
+                if 'keepalive' in lower_keys:
+                    print("Skipping resetting schedule due to KeepAlive tag on job.")
+                    return
             if resp.get("error_code", None) == "INVALID_PARAMETER_VALUE":
                 print("Job id was removed: {0}".format(job_id))
                 return
@@ -218,6 +222,9 @@ class JobsClient(dbclient):
             schedule = settings.pop('schedule', None)
             print("Defined schedule: ")
             print(schedule)
+            # set the schedule to paused
+            schedule['pause_status'] = 'PAUSED'
+            settings['schedule'] = schedule
             # Define the new config with the created_time removed
             new_config = resp
             new_config['new_settings'] = settings

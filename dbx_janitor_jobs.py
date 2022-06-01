@@ -20,7 +20,7 @@ def is_excluded_cluster(cinfo):
 
 
 def cleanup_jobs(url, token, env_name):
-    c_types = ['env_name', 'excluded', 'scheduled', 'long_running', 'empty_job', 'multitask_job']
+    c_types = ['env_name', 'excluded', 'scheduled', 'long_running', 'empty_job']
     report = dict([(key, []) for key in c_types])
     report['env_name'] = (env_name, url)
     # Simple class to list versions and get active cluster list
@@ -30,17 +30,11 @@ def cleanup_jobs(url, token, env_name):
 
     # get the jobs that have run more than 4 hours
     print("Cleaning up jobs. Get jobs duration ....")
-    long_jobs_list = jclient.get_jobs_duration(4)
+    long_jobs_list = jclient.get_jobs_duration(6)
 
     # get scheduled jobs
     print("Get scheduled jobs ....")
     sjobs = jclient.get_scheduled_jobs()
-
-    # get multitask jobs
-    print("Get multi-task jobs ....")
-    mt_jobs = jclient.get_multitask_jobs()
-    for mt_job in mt_jobs:
-        report['multitask_job'].append(mt_job)
 
     # get duplicate jobs by name
     djobs = jclient.get_duplicate_jobs()
@@ -63,7 +57,7 @@ def cleanup_jobs(url, token, env_name):
     print("# Long running jobs\n")
     for job in long_jobs_list:
         print("Long running job: {0}\t User: {1}".format(job['job_id'], job['creator_user_name']))
-        if is_excluded_cluster(job.get('cluster', None)):
+        if jclient.is_excluded_job_by_tag(job.get('job_id')):
             report['excluded'].append(job)
         else:
             report['long_running'].append(job)
@@ -85,7 +79,7 @@ def cleanup_jobs(url, token, env_name):
 
     if reset_schedules:
         for k, v in report.items():
-            if k in ('excluded', 'env_name', 'empty_job', 'multitask_job'):
+            if k in ('excluded', 'env_name', 'empty_job'):
                 continue
             elif k == 'scheduled':
                 for job in v:
@@ -127,10 +121,11 @@ def lambda_handler(event, context):
         html_report += get_html(jobs_report)
 
     print(full_report)
-    email_list = ["mwc@databricks.com"]
-    send_email("Databricks Automated Jobs Usage Report", email_list, full_report, html_report)
+    #email_list = ["mwc@databricks.com"]
+    #send_email("Databricks Automated Jobs Usage Report", email_list, full_report, html_report)
     # Print Spark Versions
     message = "Completed running cleanup across all field environments!"
     return {
         'message': message
     }
+
