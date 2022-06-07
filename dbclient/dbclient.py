@@ -74,7 +74,7 @@ class dbclient:
                     results['http_status_code'] = raw_results.status_code
         return results
 
-    def post(self, endpoint, json_params={}, printJson=True, version='2.0'):
+    def post(self, endpoint, json_params={}, printJson=False, version='2.0'):
         if version:
             ver = version
         if json_params:
